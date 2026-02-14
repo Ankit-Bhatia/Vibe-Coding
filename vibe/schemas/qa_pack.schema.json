@@ -1,0 +1,146 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "vibe/schemas/qa_pack.schema.json",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["jiraKey", "scenarios", "testCases", "testPlan", "traceability"],
+  "$defs": {
+    "jiraKey": {
+      "type": "string",
+      "pattern": "^[A-Z][A-Z0-9]*-[0-9]+$"
+    },
+    "acId": {
+      "type": "string",
+      "pattern": "^AC[1-9][0-9]*$"
+    },
+    "scId": {
+      "type": "string",
+      "pattern": "^SC-[A-Z][A-Z0-9]*-[0-9]+-[0-9]{2}$"
+    },
+    "tcId": {
+      "type": "string",
+      "pattern": "^TC-[A-Z][A-Z0-9]*-[0-9]+-[0-9]{3}$"
+    },
+    "componentRef": {
+      "type": "string",
+      "minLength": 1
+    },
+    "strList": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1
+      }
+    }
+  },
+  "properties": {
+    "jiraKey": { "$ref": "#/$defs/jiraKey" },
+    "scenarios": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["id", "title", "covers", "componentRefs"],
+        "properties": {
+          "id": { "$ref": "#/$defs/scId" },
+          "title": { "type": "string", "minLength": 1 },
+          "covers": {
+            "type": "array",
+            "minItems": 1,
+            "items": { "$ref": "#/$defs/acId" }
+          },
+          "componentRefs": {
+            "type": "array",
+            "minItems": 1,
+            "items": { "$ref": "#/$defs/componentRef" }
+          }
+        }
+      }
+    },
+    "testCases": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "id",
+          "title",
+          "type",
+          "covers",
+          "componentRefs",
+          "preconditions",
+          "steps",
+          "expected"
+        ],
+        "properties": {
+          "id": { "$ref": "#/$defs/tcId" },
+          "title": { "type": "string", "minLength": 1 },
+          "type": { "type": "string", "enum": ["AUTO_APEX", "AUTO_JEST", "MANUAL"] },
+          "covers": {
+            "type": "array",
+            "minItems": 1,
+            "items": { "$ref": "#/$defs/acId" }
+          },
+          "componentRefs": {
+            "type": "array",
+            "minItems": 1,
+            "items": { "$ref": "#/$defs/componentRef" }
+          },
+          "preconditions": { "$ref": "#/$defs/strList" },
+          "steps": { "$ref": "#/$defs/strList" },
+          "expected": { "$ref": "#/$defs/strList" }
+        }
+      }
+    },
+    "testPlan": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "scopeIn",
+        "scopeOut",
+        "env",
+        "dataSetup",
+        "entryCriteria",
+        "exitCriteria",
+        "risks"
+      ],
+      "properties": {
+        "scopeIn": { "$ref": "#/$defs/strList" },
+        "scopeOut": { "$ref": "#/$defs/strList" },
+        "env": { "$ref": "#/$defs/strList" },
+        "dataSetup": { "type": "string", "minLength": 1 },
+        "entryCriteria": { "$ref": "#/$defs/strList" },
+        "exitCriteria": { "$ref": "#/$defs/strList" },
+        "risks": { "$ref": "#/$defs/strList" }
+      }
+    },
+    "traceability": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["acId", "tcIds", "componentRefs", "automationType"],
+        "properties": {
+          "acId": { "$ref": "#/$defs/acId" },
+          "tcIds": {
+            "type": "array",
+            "minItems": 1,
+            "items": { "$ref": "#/$defs/tcId" }
+          },
+          "componentRefs": {
+            "type": "array",
+            "minItems": 1,
+            "items": { "$ref": "#/$defs/componentRef" }
+          },
+          "automationType": {
+            "type": "string",
+            "enum": ["AUTO_APEX", "AUTO_JEST", "MANUAL", "TBD"]
+          }
+        }
+      }
+    }
+  }
+}
