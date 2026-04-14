@@ -43,7 +43,7 @@
           </label>
 
           <label class="field">
-            <span class="field__label">Artifact type (select one or more)</span>
+            <span class="field__label">Artifact type</span>
             <div class="checkbox-group" id="artifactGroup">
               <label class="checkbox">
                 <input type="checkbox" value="LWC" id="artifact_LWC" checked />
@@ -66,6 +66,7 @@
                 <span>Object / Data Model</span>
               </label>
             </div>
+            <div id="artifactHint" class="field__hint"></div>
           </label>
 
           <label class="field">
@@ -223,9 +224,10 @@
               type="number"
               min="0"
               step="100"
-              value="4000"
-              placeholder="e.g., 4000"
+              value="6000"
+              placeholder="e.g., 6000"
             />
+            <div id="reservedOutputHint" class="field__hint"></div>
           </label>
         </div>
 
@@ -334,8 +336,9 @@
               the expertise level and perspective.
             </li>
             <li>
-              <strong>Artifact Type:</strong> Select one or more types of Salesforce components you're building (LWC,
-              Apex, Test Classes, Flows, or Objects).
+              <strong>Artifact Type:</strong> For Developer and Architect prompts, select one or more Salesforce
+              component types (LWC, Apex, Test Classes, Flows, or Objects). For Business Analyst prompts, this is
+              optional.
             </li>
             <li>
               <strong>Work Product:</strong> Choose what you want to generate - Build (implementation), Story (user
@@ -373,7 +376,8 @@
             </li>
             <li>
               <strong>Context Budget:</strong> Set your target context window and reserve response tokens so the app
-              can warn when the prompt gets too large for the model you plan to use.
+              can warn when the prompt gets too large for the model you plan to use. The response reserve is
+              auto-recommended from artifact complexity and can still be overridden.
             </li>
             <li>
               <strong>Advanced (optional):</strong> Add org details, integration information, or other context that
@@ -394,6 +398,8 @@
             <li><strong>Process:</strong> Steps the AI should follow (discovery for existing orgs, assumptions for
               greenfield)</li>
             <li><strong>Output Format:</strong> Specifies how the response should be structured</li>
+            <li><strong>Confidence Statement:</strong> Forces the model to self-rate the output as High, Medium, or Low
+              and explain what is driving that rating before handoff</li>
           </ul>
 
           <h3>Standard Guardrails & Constraints</h3>
@@ -425,7 +431,8 @@
           </ul>
 
           <p>
-            <strong>Note:</strong> Additional artifact-specific guardrails are automatically added based on the artifact types you select (LWC, Apex, Flow, etc.).
+            <strong>Note:</strong> Additional artifact-specific guardrails are automatically added when you select
+            artifact types (LWC, Apex, Flow, etc.).
           </p>
 
           <h3>Tips for Best Results</h3>
@@ -435,7 +442,9 @@
             <li>Include security, performance, and compliance requirements in constraints</li>
             <li>Use the optimized prompt mode when you need to trim token usage without removing key guidance</li>
             <li>Enable prompt compression when the model context is tight and you want less instructional overhead</li>
+            <li>Use the recommended response reserve as a starting point and only lower it when you are sure the output can stay complete</li>
             <li>Set the context budget before copying the prompt so you know how much room remains for the model's response</li>
+            <li>Treat a Low confidence statement as a signal that the brief needs more input before a developer picks it up</li>
             <li>Use the "Existing Org" mode when working with established Salesforce orgs to avoid duplicating
               functionality</li>
             <li>Review the generated prompt before using it - you can edit it directly if needed</li>

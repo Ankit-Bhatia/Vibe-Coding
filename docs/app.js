@@ -1,7 +1,8 @@
 /* eslint-disable no-alert */
 const STORAGE_KEY = "vc_salesforce_prompt_template_v1";
 const DEFAULT_CONTEXT_WINDOW_TOKENS = 128000;
-const DEFAULT_RESERVED_OUTPUT_TOKENS = 4000;
+const DEFAULT_RESERVED_OUTPUT_TOKENS = 6000;
+const LEGACY_RESERVED_OUTPUT_TOKENS = 4000;
 
 const $ = (id) => document.getElementById(id);
 
@@ -42,6 +43,52 @@ function normalizeTokenInput(value, fallback, minimum = 0) {
   const parsed = Number.parseInt(String(value), 10);
   if (!Number.isFinite(parsed) || parsed < minimum) return fallback;
   return parsed;
+}
+
+function getRecommendedReservedOutputTokens(inputs) {
+  const artifacts = inputs.artifacts || [];
+  let tokens = DEFAULT_RESERVED_OUTPUT_TOKENS;
+
+  if (inputs.workProduct === "Story") tokens += 1000;
+  if (inputs.workProduct === "Design") tokens += 500;
+  if (inputs.orgMode === "ExistingOrg") tokens += 1000;
+  if (artifacts.length > 1) tokens += Math.min(1500, (artifacts.length - 1) * 500);
+  if (artifacts.includes("TestClass")) tokens += 500;
+  if (artifacts.includes("Object")) tokens += 500;
+
+  return tokens;
+}
+
+function getReservedOutputModeFromState(state) {
+  if (state && state.reservedOutputTokensAuto === false) return "manual";
+  if (state && state.reservedOutputTokensAuto === true) return "auto";
+
+  if (
+    state &&
+    typeof state.reservedOutputTokens === "number" &&
+    state.reservedOutputTokens !== DEFAULT_RESERVED_OUTPUT_TOKENS &&
+    state.reservedOutputTokens !== LEGACY_RESERVED_OUTPUT_TOKENS
+  ) {
+    return "manual";
+  }
+
+  return "auto";
+}
+
+function syncReservedOutputTokensRecommendation() {
+  const input = $("reservedOutputTokens");
+  if (!input) return;
+  if (input.dataset.mode === "manual" && input.value !== "") return;
+
+  const orgModeRadio = document.querySelector('input[name="orgMode"]:checked');
+  const recommended = getRecommendedReservedOutputTokens({
+    artifacts: getSelectedArtifacts(),
+    workProduct: $("workProduct").value,
+    orgMode: orgModeRadio ? orgModeRadio.value : "Greenfield",
+  });
+
+  input.dataset.mode = "auto";
+  input.value = String(recommended);
 }
 
 function getContextBudget(state, promptText) {
@@ -214,6 +261,10 @@ function buildArtifactChecklist(artifacts) {
   return allChecklists;
 }
 
+function isArtifactSelectionRequired(persona) {
+  return safe(persona) !== "Business Analyst";
+}
+
 function artifactName(artifact) {
   switch (artifact) {
     case "LWC":
@@ -234,6 +285,21 @@ function artifactName(artifact) {
 function artifactNames(artifacts) {
   if (!artifacts || artifacts.length === 0) return "(none selected)";
   return artifacts.map(artifactName).join(", ");
+}
+
+function artifactPromptTargetText(artifacts) {
+  if (!artifacts || artifacts.length === 0) return "Salesforce work items";
+  return artifactNames(artifacts);
+}
+
+function artifactContextText(artifacts) {
+  if (!artifacts || artifacts.length === 0) return "(not specified)";
+  return artifactNames(artifacts);
+}
+
+function artifactSummaryText(artifacts) {
+  if (!artifacts || artifacts.length === 0) return "No artifact filter";
+  return artifactNames(artifacts);
 }
 
 function workProductGuidance(workProduct) {
@@ -366,7 +432,8 @@ function buildPromptSections(modelInputs) {
   const artifactChecklist = buildArtifactChecklist(artifacts);
   const work = workProductGuidance(workProduct);
   const org = orgModeGuidance(orgMode, existingComponents, knownIntegrations, orgComplexity);
-  const artifactText = artifactNames(artifacts);
+  const artifactText = artifactPromptTargetText(artifacts);
+  const artifactContext = artifactContextText(artifacts);
 
   const baseGuardrails = [
     "Do NOT invent org-specific names/IDs. If missing, ask questions or state assumptions explicitly.",
@@ -407,7 +474,7 @@ function buildPromptSections(modelInputs) {
 
   const contextLines = [
     `- Date: ${nowIsoDate()}`,
-    `- Artifact type(s): ${artifactText}`,
+    `- Artifact type(s): ${artifactContext}`,
     `- Work product: ${workProduct}`,
     `- Org mode: ${orgMode === "ExistingOrg" ? "Existing Org (Brownfield - analyze first)" : "Greenfield (build from scratch)"}`,
     `- Goal: ${goal || "(not provided)"}`,
@@ -416,7 +483,7 @@ function buildPromptSections(modelInputs) {
   ];
   const compressedContextLines = [
     `- Date: ${nowIsoDate()}`,
-    `- Artifacts: ${artifactText}`,
+    `- Artifacts: ${artifactContext}`,
     `- Work: ${workProduct}`,
     `- Org: ${orgMode === "ExistingOrg" ? "Existing Org" : "Greenfield"}`,
     `- Goal: ${goal || "(not provided)"}`,
@@ -485,6 +552,7 @@ function buildPromptSections(modelInputs) {
       "List any assumptions and open questions.",
       "List security considerations (CRUD/FLS/sharing/PII).",
       "List testing approach (unit + manual).",
+      "Add a Confidence Statement rating the output High, Medium, or Low and explain why. If confidence is Low because information is missing, say exactly what input is needed before handoff.",
       "If generating code/metadata, ensure naming is consistent and all referenced fields/objects are defined.",
     ],
   };
@@ -638,9 +706,14 @@ function buildPrompt(modelInputs) {
 }
 
 function getSelectedArtifacts() {
+  const persona = $("persona") ? $("persona").value : "";
   const checkboxes = document.querySelectorAll('#artifactGroup input[type="checkbox"]:checked');
   const selected = Array.from(checkboxes).map((cb) => cb.value);
-  // Ensure at least one is selected
+  if (!isArtifactSelectionRequired(persona)) {
+    return selected;
+  }
+
+  // Ensure at least one is selected for roles that require an artifact
   if (selected.length === 0) {
     const firstCheckbox = document.querySelector('#artifactGroup input[type="checkbox"]');
     if (firstCheckbox) {
@@ -669,6 +742,7 @@ function readStateFromUI() {
     outputStyle: $("outputStyle").value,
     promptMode: $("promptMode").value,
     enableCompression: $("enableCompression").checked,
+    reservedOutputTokensAuto: $("reservedOutputTokens").dataset.mode !== "manual",
     contextWindowTokens: normalizeTokenInput(
       $("contextWindowTokens").value,
       DEFAULT_CONTEXT_WINDOW_TOKENS,
@@ -686,6 +760,7 @@ function readStateFromUI() {
 
 function writeStateToUI(state) {
   const s = state || {};
+  const reservedOutputMode = getReservedOutputModeFromState(s);
   $("persona").value = s.persona || "Developer";
   
   // Handle artifacts - support both old single select format and new multiselect
@@ -714,6 +789,7 @@ function writeStateToUI(state) {
   $("outputStyle").value = s.outputStyle || "Markdown";
   $("promptMode").value = getPromptMode(s.promptMode);
   $("enableCompression").checked = isCompressionEnabled(s.enableCompression);
+  $("reservedOutputTokens").dataset.mode = reservedOutputMode;
   $("contextWindowTokens").value = normalizeTokenInput(
     s.contextWindowTokens,
     DEFAULT_CONTEXT_WINDOW_TOKENS,
@@ -736,6 +812,15 @@ function updateExistingOrgVisibility() {
   }
 }
 
+function updateArtifactGuidance() {
+  const persona = $("persona").value;
+  if ($("artifactHint")) {
+    $("artifactHint").textContent = isArtifactSelectionRequired(persona)
+      ? "Required for Developer and Architect prompts."
+      : "Optional for Business Analyst prompts. Leave blank for a general story-level brief.";
+  }
+}
+
 function renderReadonlyConstraints() {
   const container = $("readonlyConstraints");
   container.innerHTML = STANDARD_CONSTRAINTS.map(
@@ -744,9 +829,7 @@ function renderReadonlyConstraints() {
 }
 
 function updatePromptMeta(state) {
-  const artifactText = state.artifacts && state.artifacts.length > 0
-    ? artifactNames(state.artifacts)
-    : "(none selected)";
+  const artifactText = artifactSummaryText(state.artifacts);
   const orgModeText = state.orgMode === "ExistingOrg" ? "Brownfield" : "Greenfield";
   const promptMode = getPromptMode(state.promptMode);
   const compressionEnabled = isCompressionEnabled(state.enableCompression);
@@ -790,10 +873,19 @@ function updatePromptMeta(state) {
   $("contextBudget").dataset.state = budget.level;
   $("contextStatus").textContent = budget.statusText;
   $("contextDetail").textContent = budget.detailText;
+
+  const recommendedReserve = getRecommendedReservedOutputTokens(state);
+  const reserveMode = state.reservedOutputTokensAuto ? "auto" : "manual";
+  $("reservedOutputHint").textContent =
+    reserveMode === "auto"
+      ? `Recommended reserve: ${formatTokenCount(recommendedReserve)} tokens based on artifact complexity.`
+      : `Custom reserve: ${formatTokenCount(state.reservedOutputTokens)} tokens. Recommended: ${formatTokenCount(recommendedReserve)}. Clear the field to return to auto.`;
 }
 
 function updatePrompt() {
   updateExistingOrgVisibility();
+  updateArtifactGuidance();
+  syncReservedOutputTokensRecommendation();
   const state = readStateFromUI();
   $("output").value = buildPrompt(state);
   updatePromptMeta(state);
@@ -893,6 +985,7 @@ function resetAll() {
     outputStyle: "Markdown",
     promptMode: "Standard",
     enableCompression: false,
+    reservedOutputTokensAuto: true,
     contextWindowTokens: DEFAULT_CONTEXT_WINDOW_TOKENS,
     reservedOutputTokens: DEFAULT_RESERVED_OUTPUT_TOKENS,
     orgDetails: "",
@@ -938,7 +1031,6 @@ function init() {
     "promptMode",
     "enableCompression",
     "contextWindowTokens",
-    "reservedOutputTokens",
     "orgDetails",
     "integration",
   ];
@@ -958,6 +1050,15 @@ function init() {
   // Handle org mode radio buttons
   document.querySelectorAll('input[name="orgMode"]').forEach((radio) => {
     radio.addEventListener("change", updatePrompt);
+  });
+
+  $("reservedOutputTokens").addEventListener("input", () => {
+    $("reservedOutputTokens").dataset.mode = $("reservedOutputTokens").value === "" ? "auto" : "manual";
+    updatePrompt();
+  });
+  $("reservedOutputTokens").addEventListener("change", () => {
+    $("reservedOutputTokens").dataset.mode = $("reservedOutputTokens").value === "" ? "auto" : "manual";
+    updatePrompt();
   });
 
   $("btnCopyClaude").addEventListener("click", () => copyPromptFor("claude"));

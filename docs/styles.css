@@ -216,6 +216,12 @@ body {
   font-size: 12px;
 }
 
+.field__hint {
+  color: var(--faint);
+  font-size: 11.5px;
+  line-height: 1.45;
+}
+
 .field__control {
   border: 1px solid var(--border-soft);
   background: #ffffff;
