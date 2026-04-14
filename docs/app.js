@@ -1,5 +1,7 @@
 /* eslint-disable no-alert */
 const STORAGE_KEY = "vc_salesforce_prompt_template_v1";
+const DEFAULT_CONTEXT_WINDOW_TOKENS = 128000;
+const DEFAULT_RESERVED_OUTPUT_TOKENS = 4000;
 
 const $ = (id) => document.getElementById(id);
 
@@ -20,6 +22,113 @@ function safe(v) {
   if (v == null) return "";
   const s = String(v).trim();
   return s;
+}
+
+function estimateTokens(text) {
+  const normalized = String(text || "").replace(/\s+/g, " ").trim();
+  if (!normalized) return 0;
+  return Math.ceil(normalized.length / 4);
+}
+
+function formatTokenCount(count) {
+  return count.toLocaleString("en-US");
+}
+
+function countCharacters(text) {
+  return String(text || "").length;
+}
+
+function normalizeTokenInput(value, fallback, minimum = 0) {
+  const parsed = Number.parseInt(String(value), 10);
+  if (!Number.isFinite(parsed) || parsed < minimum) return fallback;
+  return parsed;
+}
+
+function getContextBudget(state, promptText) {
+  const contextWindowTokens = normalizeTokenInput(
+    state.contextWindowTokens,
+    DEFAULT_CONTEXT_WINDOW_TOKENS,
+    1
+  );
+  const reservedOutputTokens = normalizeTokenInput(
+    state.reservedOutputTokens,
+    DEFAULT_RESERVED_OUTPUT_TOKENS,
+    0
+  );
+  const promptTokens = estimateTokens(promptText);
+  const availableInputTokens = contextWindowTokens - reservedOutputTokens;
+
+  if (availableInputTokens <= 0) {
+    return {
+      level: "over",
+      promptTokens,
+      contextWindowTokens,
+      reservedOutputTokens,
+      availableInputTokens: 0,
+      remainingInputTokens: -promptTokens,
+      statusText: "Invalid budget",
+      detailText:
+        `Reserved response tokens (${formatTokenCount(reservedOutputTokens)}) leave no room for the prompt. ` +
+        "Increase the context window or lower the response reserve.",
+    };
+  }
+
+  const remainingInputTokens = availableInputTokens - promptTokens;
+  const usagePct = Math.round((promptTokens / availableInputTokens) * 100);
+  const baseDetail =
+    `Prompt uses ${formatTokenCount(promptTokens)} of ${formatTokenCount(availableInputTokens)} available input tokens ` +
+    `after reserving ${formatTokenCount(reservedOutputTokens)} tokens for the response in a ${formatTokenCount(contextWindowTokens)} token window.`;
+
+  if (remainingInputTokens < 0) {
+    return {
+      level: "over",
+      promptTokens,
+      contextWindowTokens,
+      reservedOutputTokens,
+      availableInputTokens,
+      remainingInputTokens,
+      statusText: "Exceeds context window",
+      detailText:
+        `${baseDetail} Reduce prompt size or switch to Optimized. Over by ${formatTokenCount(Math.abs(remainingInputTokens))} tokens.`,
+    };
+  }
+
+  if (usagePct >= 90) {
+    return {
+      level: "tight",
+      promptTokens,
+      contextWindowTokens,
+      reservedOutputTokens,
+      availableInputTokens,
+      remainingInputTokens,
+      statusText: "Very tight",
+      detailText: `${baseDetail} Only ${formatTokenCount(remainingInputTokens)} input tokens remain.`,
+    };
+  }
+
+  if (usagePct >= 75) {
+    return {
+      level: "tight",
+      promptTokens,
+      contextWindowTokens,
+      reservedOutputTokens,
+      availableInputTokens,
+      remainingInputTokens,
+      statusText: "Tight but fits",
+      detailText: `${baseDetail} ${formatTokenCount(remainingInputTokens)} input tokens remain.`,
+    };
+  }
+
+  return {
+    level: "healthy",
+    promptTokens,
+    contextWindowTokens,
+    reservedOutputTokens,
+    availableInputTokens,
+    remainingInputTokens,
+    statusText: "Healthy headroom",
+    detailText: `${baseDetail} ${formatTokenCount(remainingInputTokens)} input tokens remain.`,
+  };
 }
 
 function bulletsFromTextarea(text) {
@@ -215,11 +324,31 @@ function orgModeGuidance(orgMode, knownComponents, knownIntegrations, orgComplex
   };
 }
 
-function buildPrompt(modelInputs) {
+function getPromptMode(value) {
+  return safe(value) === "Optimized" ? "Optimized" : "Standard";
+}
+
+function isCompressionEnabled(value) {
+  return value === true || value === "true" || value === 1 || value === "1";
+}
+
+function buildPromptSections(modelInputs) {
   const persona = safe(modelInputs.persona);
   const artifacts = modelInputs.artifacts || [];
   const workProduct = safe(modelInputs.workProduct);
   const orgMode = safe(modelInputs.orgMode);
+  const promptMode = getPromptMode(modelInputs.promptMode);
+  const compressionEnabled = isCompressionEnabled(modelInputs.enableCompression);
+  const contextWindowTokens = normalizeTokenInput(
+    modelInputs.contextWindowTokens,
+    DEFAULT_CONTEXT_WINDOW_TOKENS,
+    1
+  );
+  const reservedOutputTokens = normalizeTokenInput(
+    modelInputs.reservedOutputTokens,
+    DEFAULT_RESERVED_OUTPUT_TOKENS,
+    0
+  );
 
   const goal = safe(modelInputs.goal);
   const objects = safe(modelInputs.objects);
@@ -237,6 +366,7 @@ function buildPrompt(modelInputs) {
   const artifactChecklist = buildArtifactChecklist(artifacts);
   const work = workProductGuidance(workProduct);
   const org = orgModeGuidance(orgMode, existingComponents, knownIntegrations, orgComplexity);
+  const artifactText = artifactNames(artifacts);
 
   const baseGuardrails = [
     "Do NOT invent org-specific names/IDs. If missing, ask questions or state assumptions explicitly.",
@@ -251,33 +381,50 @@ function buildPrompt(modelInputs) {
     "Explain how the solution aligns with Salesforce best practices and what trade-offs were made.",
   ];
 
+  const optimizedGuardrails = [
+    "Do not invent org-specific names/IDs; ask questions or label assumptions.",
+    "If requirements conflict, call it out and present options.",
+    "If information is missing or ambiguous, list clarifying questions and assumptions before code.",
+    "If you cannot proceed safely, return clarifying questions instead of code.",
+    "Skip AI preamble and go straight to the engineering content.",
+    "Keep the output copy/paste ready with clear headings and checklists.",
+    "Explain Salesforce best-practice alignment and trade-offs.",
+    ...artifactChecklist,
+  ];
+
   const outputStyleNote =
     outputStyle === "Jira"
       ? "Format the output to be Jira-ready (concise headings + acceptance criteria)."
       : outputStyle === "Engineering"
         ? "Format the output as an engineering spec with crisp sections and decision logs."
         : "Format the output in Markdown with clear headings and bullet lists.";
+  const compressedOutputStyleNote =
+    outputStyle === "Jira"
+      ? "Jira-ready headings + acceptance criteria."
+      : outputStyle === "Engineering"
+        ? "Engineering spec with crisp sections."
+        : "Markdown headings + bullets.";
 
-  const prompt = [
-    `You are a senior Salesforce ${persona} and an expert AI pair-programmer.`,
-    "",
-    "## Role",
-    `Act as a Salesforce ${persona}. Your goal is to help produce a high-quality ${workProduct} for: ${artifactNames(artifacts)}.`,
-    "",
-    "## Context",
+  const contextLines = [
     `- Date: ${nowIsoDate()}`,
-    `- Artifact type(s): ${artifactNames(artifacts)}`,
+    `- Artifact type(s): ${artifactText}`,
     `- Work product: ${workProduct}`,
     `- Org mode: ${orgMode === "ExistingOrg" ? "Existing Org (Brownfield - analyze first)" : "Greenfield (build from scratch)"}`,
     `- Goal: ${goal || "(not provided)"}`,
     `- Primary object(s): ${objects || "(not provided)"}`,
     `- Users/personas: ${users || "(not provided)"}`,
-    "",
-    "### Requirements",
-    joinBullets(requirements),
-    "",
-    orgDetails ? "### Org details\n" + orgDetails : "",
-    integration ? "### Data / integration\n" + integration : "",
+  ];
+  const compressedContextLines = [
+    `- Date: ${nowIsoDate()}`,
+    `- Artifacts: ${artifactText}`,
+    `- Work: ${workProduct}`,
+    `- Org: ${orgMode === "ExistingOrg" ? "Existing Org" : "Greenfield"}`,
+    `- Goal: ${goal || "(not provided)"}`,
+    `- Objects: ${objects || "(not provided)"}`,
+    `- Users: ${users || "(not provided)"}`,
+  ];
+
+  const existingOrgSection =
     orgMode === "ExistingOrg"
       ? [
           existingComponents ? `### Known components (Apex/Flows/LWCs)\n${existingComponents}` : "",
@@ -286,38 +433,208 @@ function buildPrompt(modelInputs) {
         ]
           .filter(Boolean)
           .join("\n\n") || "### Existing org context\n(none provided)"
-      : "",
-    "",
-    "## Constraints",
-    joinBullets(allConstraints),
-    "",
-    "## Guardrails",
-    joinBullets([...baseGuardrails, ...salesforceGuardrails, ...artifactChecklist]),
-    "",
-    "## Outcomes (definition of done)",
-    joinBullets(work.outcomes),
-    "",
-    "## Process",
-    joinBullets(org.firstStep),
-    "",
-    "## Output format",
-    `- ${outputStyleNote}`,
-    "- Use exactly the following section headings in this order:",
-    ...work.outputFormat.map((x, i) => `  ${i + 1}. ${x}`),
-    "",
-    "## Required final checks",
-    joinBullets([
+      : "";
+  const compressedExistingOrgSection =
+    orgMode === "ExistingOrg"
+      ? [
+          existingComponents ? `Known components\n${existingComponents}` : "",
+          knownIntegrations ? `Known integrations\n${knownIntegrations}` : "",
+          orgComplexity ? `Org complexity\n${orgComplexity}` : "",
+        ]
+          .filter(Boolean)
+          .join("\n\n") || "Existing org context\n(none provided)"
+      : "";
+
+  return {
+    promptMode,
+    compressionEnabled,
+    persona,
+    artifacts,
+    artifactText,
+    workProduct,
+    orgMode,
+    contextWindowTokens,
+    reservedOutputTokens,
+    goal,
+    objects,
+    users,
+    requirements,
+    allConstraints,
+    orgDetails,
+    integration,
+    work,
+    org,
+    outputStyleNote,
+    compressedOutputStyleNote,
+    contextLines,
+    compressedContextLines,
+    existingOrgSection,
+    compressedExistingOrgSection,
+    responseBudgetInstruction:
+      reservedOutputTokens > 0
+        ? `Keep the response within approximately ${formatTokenCount(reservedOutputTokens)} tokens to stay inside the requested context budget.`
+        : "",
+    compressedResponseBudgetInstruction:
+      reservedOutputTokens > 0
+        ? `Keep response near ${formatTokenCount(reservedOutputTokens)} tokens.`
+        : "",
+    standardGuardrails: [...baseGuardrails, ...salesforceGuardrails, ...artifactChecklist],
+    optimizedGuardrails,
+    finalChecks: [
       "Confirm you met the goal and each requirement.",
       "List any assumptions and open questions.",
       "List security considerations (CRUD/FLS/sharing/PII).",
       "List testing approach (unit + manual).",
       "If generating code/metadata, ensure naming is consistent and all referenced fields/objects are defined.",
-    ]),
+    ],
+  };
+}
+
+function buildStandardPrompt(sections) {
+  const prompt = [
+    `You are a senior Salesforce ${sections.persona} and an expert AI pair-programmer.`,
+    "",
+    "## Role",
+    `Act as a Salesforce ${sections.persona}. Your goal is to help produce a high-quality ${sections.workProduct} for: ${sections.artifactText}.`,
+    "",
+    "## Context",
+    ...sections.contextLines,
+    "",
+    "### Requirements",
+    joinBullets(sections.requirements),
+    "",
+    sections.orgDetails ? "### Org details\n" + sections.orgDetails : "",
+    sections.integration ? "### Data / integration\n" + sections.integration : "",
+    sections.existingOrgSection,
+    "",
+    "## Constraints",
+    joinBullets(sections.allConstraints),
+    "",
+    "## Guardrails",
+    joinBullets(sections.standardGuardrails),
+    "",
+    "## Outcomes (definition of done)",
+    joinBullets(sections.work.outcomes),
+    "",
+    "## Process",
+    joinBullets(sections.org.firstStep),
+    "",
+    "## Output format",
+    `- ${sections.outputStyleNote}`,
+    sections.responseBudgetInstruction ? `- ${sections.responseBudgetInstruction}` : "",
+    "- Use exactly the following section headings in this order:",
+    ...sections.work.outputFormat.map((x, i) => `  ${i + 1}. ${x}`),
+    "",
+    "## Required final checks",
+    joinBullets(sections.finalChecks),
   ]
     .filter((x) => x !== "")
     .join("\n");
 
   return prompt.trim() + "\n";
+}
+
+function buildOptimizedPrompt(sections) {
+  const optimizedExistingOrgSection = sections.existingOrgSection.replace(/### /g, "");
+
+  const prompt = [
+    `Act as a senior Salesforce ${sections.persona}. Produce a ${sections.workProduct} for ${sections.artifactText}.`,
+    "",
+    "Context",
+    ...sections.contextLines,
+    "",
+    "Requirements",
+    joinBullets(sections.requirements),
+    "",
+    sections.orgDetails ? "Org details\n" + sections.orgDetails : "",
+    sections.integration ? "Data / integration\n" + sections.integration : "",
+    optimizedExistingOrgSection,
+    "",
+    "Constraints",
+    joinBullets(sections.allConstraints),
+    "",
+    "Guardrails",
+    joinBullets(sections.optimizedGuardrails),
+    "",
+    "Definition of done",
+    joinBullets(sections.work.outcomes),
+    "",
+    "Process",
+    joinBullets(sections.org.firstStep),
+    "",
+    "Output",
+    `- ${sections.outputStyleNote}`,
+    sections.responseBudgetInstruction ? `- ${sections.responseBudgetInstruction}` : "",
+    `- Use these sections, in order: ${sections.work.outputFormat.join(" | ")}`,
+    "- Keep the response concise, implementation-ready, and copy/paste ready.",
+    "",
+    "Final checks",
+    joinBullets(sections.finalChecks),
+  ]
+    .filter((x) => x !== "")
+    .join("\n");
+
+  return prompt.trim() + "\n";
+}
+
+function buildCompressedPrompt(sections, baseMode) {
+  const guardrails = baseMode === "Optimized" ? sections.optimizedGuardrails : sections.standardGuardrails;
+  const prompt = [
+    `Act as senior Salesforce ${sections.persona}. Deliver ${sections.workProduct} for ${sections.artifactText}.`,
+    "",
+    "Context",
+    ...sections.compressedContextLines,
+    "",
+    "Requirements",
+    joinBullets(sections.requirements),
+    "",
+    sections.orgDetails ? "Org details\n" + sections.orgDetails : "",
+    sections.integration ? "Integrations\n" + sections.integration : "",
+    sections.compressedExistingOrgSection,
+    "",
+    "Constraints",
+    joinBullets(sections.allConstraints),
+    "",
+    "Guardrails",
+    joinBullets(guardrails),
+    "",
+    "DoD",
+    joinBullets(sections.work.outcomes),
+    "",
+    "Process",
+    joinBullets(sections.org.firstStep),
+    "",
+    "Output",
+    `- ${sections.compressedOutputStyleNote}`,
+    sections.compressedResponseBudgetInstruction ? `- ${sections.compressedResponseBudgetInstruction}` : "",
+    `- Sections: ${sections.work.outputFormat.join(" | ")}`,
+    "",
+    "Checks",
+    joinBullets(sections.finalChecks),
+  ]
+    .filter((x) => x !== "")
+    .join("\n");
+
+  return prompt.trim() + "\n";
+}
+
+function buildPromptVariants(modelInputs) {
+  const sections = buildPromptSections(modelInputs);
+  return {
+    promptMode: sections.promptMode,
+    compressionEnabled: sections.compressionEnabled,
+    standard: buildStandardPrompt(sections),
+    optimized: buildOptimizedPrompt(sections),
+    standardCompressed: buildCompressedPrompt(sections, "Standard"),
+    optimizedCompressed: buildCompressedPrompt(sections, "Optimized"),
+  };
+}
+
+function buildPrompt(modelInputs) {
+  const variants = buildPromptVariants(modelInputs);
+  const basePrompt = variants.promptMode === "Optimized" ? variants.optimized : variants.standard;
+  if (!variants.compressionEnabled) return basePrompt;
+  return variants.promptMode === "Optimized" ? variants.optimizedCompressed : variants.standardCompressed;
 }
 
 function getSelectedArtifacts() {
@@ -350,6 +667,18 @@ function readStateFromUI() {
     orgComplexity: $("orgComplexity") ? $("orgComplexity").value : "",
     constraints: $("constraints").value,
     outputStyle: $("outputStyle").value,
+    promptMode: $("promptMode").value,
+    enableCompression: $("enableCompression").checked,
+    contextWindowTokens: normalizeTokenInput(
+      $("contextWindowTokens").value,
+      DEFAULT_CONTEXT_WINDOW_TOKENS,
+      1
+    ),
+    reservedOutputTokens: normalizeTokenInput(
+      $("reservedOutputTokens").value,
+      DEFAULT_RESERVED_OUTPUT_TOKENS,
+      0
+    ),
     orgDetails: $("orgDetails").value,
     integration: $("integration").value,
   };
@@ -383,6 +712,18 @@ function writeStateToUI(state) {
   if ($("orgComplexity")) $("orgComplexity").value = s.orgComplexity || "";
   $("constraints").value = s.constraints || "";
   $("outputStyle").value = s.outputStyle || "Markdown";
+  $("promptMode").value = getPromptMode(s.promptMode);
+  $("enableCompression").checked = isCompressionEnabled(s.enableCompression);
+  $("contextWindowTokens").value = normalizeTokenInput(
+    s.contextWindowTokens,
+    DEFAULT_CONTEXT_WINDOW_TOKENS,
+    1
+  );
+  $("reservedOutputTokens").value = normalizeTokenInput(
+    s.reservedOutputTokens,
+    DEFAULT_RESERVED_OUTPUT_TOKENS,
+    0
+  );
   $("orgDetails").value = s.orgDetails || "";
   $("integration").value = s.integration || "";
 }
@@ -402,18 +743,60 @@ function renderReadonlyConstraints() {
   ).join("");
 }
 
+function updatePromptMeta(state) {
+  const artifactText = state.artifacts && state.artifacts.length > 0
+    ? artifactNames(state.artifacts)
+    : "(none selected)";
+  const orgModeText = state.orgMode === "ExistingOrg" ? "Brownfield" : "Greenfield";
+  const promptMode = getPromptMode(state.promptMode);
+  const compressionEnabled = isCompressionEnabled(state.enableCompression);
+  const meta = `${state.persona} • ${artifactText} • ${orgModeText} • ${state.workProduct} • ${promptMode}${compressionEnabled ? " • Compressed" : ""}`;
+  $("promptMeta").textContent = meta;
+
+  const outputText = $("output").value;
+  const tokenCount = estimateTokens(outputText);
+  const charCount = countCharacters(outputText);
+  const variants = buildPromptVariants(state);
+  let tokenMetaText = `Approx size: ${formatTokenCount(tokenCount)} tokens • ${formatTokenCount(charCount)} chars`;
+  const savingsNotes = [];
+
+  if (promptMode === "Optimized") {
+    const optimizationBaseline = compressionEnabled ? variants.standardCompressed : variants.standard;
+    const baselineCount = estimateTokens(optimizationBaseline);
+    const saved = baselineCount - tokenCount;
+    if (baselineCount > 0 && saved > 0) {
+      const savingsPct = Math.round((saved / baselineCount) * 100);
+      savingsNotes.push(`${savingsPct}% less via optimized mode`);
+    }
+  }
+
+  if (compressionEnabled) {
+    const compressionBaseline = promptMode === "Optimized" ? variants.optimized : variants.standard;
+    const baselineCount = estimateTokens(compressionBaseline);
+    const saved = baselineCount - tokenCount;
+    if (baselineCount > 0 && saved > 0) {
+      const savingsPct = Math.round((saved / baselineCount) * 100);
+      savingsNotes.push(`${savingsPct}% less via compression`);
+    }
+  }
+
+  if (savingsNotes.length > 0) {
+    tokenMetaText = `${tokenMetaText} (${savingsNotes.join("; ")})`;
+  }
+
+  $("tokenMeta").textContent = tokenMetaText;
+
+  const budget = getContextBudget(state, $("output").value);
+  $("contextBudget").dataset.state = budget.level;
+  $("contextStatus").textContent = budget.statusText;
+  $("contextDetail").textContent = budget.detailText;
+}
+
 function updatePrompt() {
   updateExistingOrgVisibility();
   const state = readStateFromUI();
-  const prompt = buildPrompt(state);
-  $("output").value = prompt;
-
-  const artifactText = state.artifacts && state.artifacts.length > 0 
-    ? artifactNames(state.artifacts) 
-    : "(none selected)";
-  const orgModeText = state.orgMode === "ExistingOrg" ? "Brownfield" : "Greenfield";
-  const meta = `${state.persona} • ${artifactText} • ${orgModeText} • ${state.workProduct}`;
-  $("promptMeta").textContent = meta;
+  $("output").value = buildPrompt(state);
+  updatePromptMeta(state);
 
   try {
     localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
@@ -422,15 +805,43 @@ function updatePrompt() {
   }
 }
 
-async function copyPrompt() {
-  const text = $("output").value || "";
+function buildCopyPayload(target) {
+  const prompt = String($("output").value || "").trim();
+  if (!prompt) return "";
+
+  if (target === "claude") {
+    return [
+      "Use the following prompt as the full task brief.",
+      "If any required information is missing, ask concise clarifying questions before answering.",
+      "",
+      prompt,
+    ].join("\n");
+  }
+
+  return [
+    "Use the following prompt for this task in the current workspace.",
+    "Inspect the relevant files first, match existing patterns, and keep edits scoped.",
+    "If critical information is missing, ask concise clarifying questions before making changes.",
+    "",
+    prompt,
+  ].join("\n");
+}
+
+async function copyPromptFor(target) {
+  const text = buildCopyPayload(target);
   try {
     await navigator.clipboard.writeText(text);
   } catch {
-    // Fallback
-    $("output").focus();
-    $("output").select();
+    const temp = document.createElement("textarea");
+    temp.value = text;
+    temp.setAttribute("readonly", "readonly");
+    temp.style.position = "fixed";
+    temp.style.opacity = "0";
+    document.body.appendChild(temp);
+    temp.focus();
+    temp.select();
     document.execCommand("copy");
+    temp.remove();
   }
 }
 
@@ -439,12 +850,19 @@ function downloadPrompt() {
   const artifactPart = state.artifacts && state.artifacts.length > 0
     ? state.artifacts.join("-").toLowerCase()
     : "none";
+  const promptMode = getPromptMode(state.promptMode);
   const nameParts = [
     "prompt",
     artifactPart,
     state.orgMode === "ExistingOrg" ? "existing-org" : "greenfield",
     state.workProduct.toLowerCase(),
   ];
+  if (promptMode === "Optimized") {
+    nameParts.push("optimized");
+  }
+  if (isCompressionEnabled(state.enableCompression)) {
+    nameParts.push("compressed");
+  }
   const filename = `${nameParts.join("_")}.md`;
   const blob = new Blob([$("output").value || ""], { type: "text/markdown;charset=utf-8" });
   const url = URL.createObjectURL(blob);
@@ -473,6 +891,10 @@ function resetAll() {
     orgComplexity: "",
     constraints: "",
     outputStyle: "Markdown",
+    promptMode: "Standard",
+    enableCompression: false,
+    contextWindowTokens: DEFAULT_CONTEXT_WINDOW_TOKENS,
+    reservedOutputTokens: DEFAULT_RESERVED_OUTPUT_TOKENS,
     orgDetails: "",
     integration: "",
   });
@@ -513,6 +935,10 @@ function init() {
     "orgComplexity",
     "constraints",
     "outputStyle",
+    "promptMode",
+    "enableCompression",
+    "contextWindowTokens",
+    "reservedOutputTokens",
     "orgDetails",
     "integration",
   ];
@@ -534,12 +960,17 @@ function init() {
     radio.addEventListener("change", updatePrompt);
   });
 
-  $("btnCopy").addEventListener("click", copyPrompt);
-  $("btnCopy2").addEventListener("click", copyPrompt);
+  $("btnCopyClaude").addEventListener("click", () => copyPromptFor("claude"));
+  $("btnCopyClaude2").addEventListener("click", () => copyPromptFor("claude"));
+  $("btnCopyCursor").addEventListener("click", () => copyPromptFor("cursor"));
+  $("btnCopyCursor2").addEventListener("click", () => copyPromptFor("cursor"));
   $("btnDownload").addEventListener("click", downloadPrompt);
   $("btnReset").addEventListener("click", resetAll);
   $("btnHelp").addEventListener("click", toggleHelpModal);
   $("btnCloseHelp").addEventListener("click", toggleHelpModal);
+  $("output").addEventListener("input", () => {
+    updatePromptMeta(readStateFromUI());
+  });
   
   // Close modal when clicking overlay
   $("helpModal").addEventListener("click", (e) => {
@@ -557,4 +988,3 @@ function init() {
 }
 
 document.addEventListener("DOMContentLoaded", init);
-

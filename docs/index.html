@@ -22,7 +22,8 @@
       <div class="header__actions">
         <button id="btnHelp" class="btn btn--ghost" type="button">How to Use</button>
         <button id="btnReset" class="btn btn--ghost" type="button">Reset</button>
-        <button id="btnCopy" class="btn" type="button">Copy prompt</button>
+        <button id="btnCopyClaude" class="btn" type="button">Copy Claude</button>
+        <button id="btnCopyCursor" class="btn btn--ghost" type="button">Copy Cursor</button>
       </div>
     </header>
 
@@ -186,14 +187,60 @@
           </div>
         </label>
 
-        <label class="field">
-          <span class="field__label">Output preference</span>
-          <select id="outputStyle" class="field__control">
-            <option value="Markdown">Markdown</option>
-            <option value="Jira">Jira-ready (headings + AC)</option>
-            <option value="Engineering">Engineering spec (structured)</option>
-          </select>
-        </label>
+        <div class="grid">
+          <label class="field">
+            <span class="field__label">Output preference</span>
+            <select id="outputStyle" class="field__control">
+              <option value="Markdown">Markdown</option>
+              <option value="Jira">Jira-ready (headings + AC)</option>
+              <option value="Engineering">Engineering spec (structured)</option>
+            </select>
+          </label>
+          <label class="field">
+            <span class="field__label">Prompt mode</span>
+            <select id="promptMode" class="field__control">
+              <option value="Standard">Standard</option>
+              <option value="Optimized">Optimized (lower token use)</option>
+            </select>
+          </label>
+        </div>
+
+        <div class="grid">
+          <label class="field">
+            <span class="field__label">Context window (tokens)</span>
+            <input
+              id="contextWindowTokens"
+              class="field__control"
+              type="number"
+              min="1"
+              step="1000"
+              value="128000"
+              placeholder="e.g., 128000"
+            />
+          </label>
+          <label class="field">
+            <span class="field__label">Reserve for response (tokens)</span>
+            <input
+              id="reservedOutputTokens"
+              class="field__control"
+              type="number"
+              min="0"
+              step="100"
+              value="4000"
+              placeholder="e.g., 4000"
+            />
+          </label>
+        </div>
+
+        <div class="field">
+          <span class="field__label">Prompt compression</span>
+          <div class="checkbox-group checkbox-group--single">
+            <label class="checkbox">
+              <input type="checkbox" id="enableCompression" />
+              <span>Strip verbose explanation for token-sensitive contexts</span>
+            </label>
+          </div>
+        </div>
 
         <div class="divider"></div>
 
@@ -225,15 +272,26 @@
       <section class="panel">
         <div class="panel__titleRow">
           <h2 class="panel__title">Generated prompt</h2>
-          <div class="pill" id="promptMeta"></div>
+          <div class="panel__meta">
+            <div class="pill" id="promptMeta"></div>
+            <div class="pill" id="tokenMeta" aria-live="polite"></div>
+          </div>
         </div>
         <p class="panel__hint">This is the prompt you paste into your AI tool. It includes explicit guardrails and output format.</p>
+        <div id="contextBudget" class="context-budget" data-state="healthy">
+          <div class="context-budget__row">
+            <div class="context-budget__title">Context budget</div>
+            <div id="contextStatus" class="context-budget__status" aria-live="polite"></div>
+          </div>
+          <div id="contextDetail" class="context-budget__detail"></div>
+        </div>
 
         <textarea id="output" class="output" spellcheck="false"></textarea>
 
         <div class="actions">
           <button id="btnDownload" class="btn btn--ghost" type="button">Download .md</button>
-          <button id="btnCopy2" class="btn" type="button">Copy prompt</button>
+          <button id="btnCopyClaude2" class="btn" type="button">Copy for Claude</button>
+          <button id="btnCopyCursor2" class="btn btn--ghost" type="button">Copy for Cursor</button>
         </div>
 
         <div class="footnote">
@@ -309,6 +367,18 @@
               constraints specific to your project.
             </li>
             <li>
+              <strong>Prompt Mode:</strong> Use Standard for the full prompt or Optimized to reduce token usage while
+              keeping the same core instructions.
+            </li>
+            <li>
+              <strong>Prompt Compression:</strong> Turn this on to strip explanatory wording and emit a leaner prompt
+              for token-sensitive contexts.
+            </li>
+            <li>
+              <strong>Context Budget:</strong> Set your target context window and reserve response tokens so the app
+              can warn when the prompt gets too large for the model you plan to use.
+            </li>
+            <li>
               <strong>Advanced (optional):</strong> Add org details, integration information, or other context that
               might be relevant.
             </li>
@@ -366,6 +436,9 @@
             <li>Be specific in your goal and requirements - vague inputs lead to vague outputs</li>
             <li>For existing orgs, list known components to help the AI understand your environment</li>
             <li>Include security, performance, and compliance requirements in constraints</li>
+            <li>Use the optimized prompt mode when you need to trim token usage without removing key guidance</li>
+            <li>Enable prompt compression when the model context is tight and you want less instructional overhead</li>
+            <li>Set the context budget before copying the prompt so you know how much room remains for the model's response</li>
             <li>Use the "Existing Org" mode when working with established Salesforce orgs to avoid duplicating
               functionality</li>
             <li>Review the generated prompt before using it - you can edit it directly if needed</li>
@@ -373,9 +446,9 @@
 
           <h3>Copying and Using the Prompt</h3>
           <p>
-            Once generated, click "Copy prompt" to copy the entire prompt to your clipboard, then paste it into your AI
-            tool (ChatGPT, Claude, Cursor, etc.). The prompt is designed to guide the AI to ask clarifying questions
-            if information is missing rather than making assumptions.
+            Once generated, use "Copy Claude" or "Copy Cursor" to copy a version of the prompt wrapped for that tool's
+            input style. The size badge shows approximate token and character counts before you paste. The prompt is
+            designed to guide the AI to ask clarifying questions if information is missing rather than making assumptions.
           </p>
         </div>
       </div>
@@ -384,4 +457,3 @@
     <script src="./app.js"></script>
   </body>
 </html>
-
