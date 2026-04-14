@@ -1,6 +1,6 @@
-# Ksquare Group — Salesforce Prompt Templates
+# Monotype — Salesforce Prompt Templates
 
-**Ksquare Group's** static web application to generate **AI prompt templates** for Salesforce development using prompt engineering best practices:
+Static web application to generate **AI prompt templates** for Salesforce development using prompt engineering best practices:
 
 - **Role**
 - **Context**
@@ -55,4 +55,3 @@ Then visit `http://localhost:8080`.
 - `docs/index.html`: UI
 - `docs/styles.css`: styling
 - `docs/app.js`: prompt template generator logic
-

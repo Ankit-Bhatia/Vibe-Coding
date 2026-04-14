@@ -3,21 +3,19 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Ksquare Group — Salesforce Prompt Templates</title>
+    <title>Monotype — Salesforce Prompt Templates</title>
     <meta
       name="description"
-      content="Ksquare Group's AI prompt template generator for Salesforce development (LWC, Apex, Tests, Flows, Objects) using role/context/constraints/guardrails/outcomes."
+      content="Monotype prompt template generator for Salesforce development with structured context, guardrails, compression, and workflow-ready output."
     />
     <link rel="stylesheet" href="./styles.css" />
   </head>
   <body>
     <header class="container header">
       <div class="brand">
-        <div class="brand__mark" aria-hidden="true">KG</div>
-        <div class="brand__text">
-          <div class="brand__title">Ksquare Group</div>
-          <div class="brand__subtitle">Salesforce Prompt Templates (LWC • Apex • Tests • Flows • Objects)</div>
-        </div>
+        <div class="brand__eyebrow">Monotype</div>
+        <div class="brand__title">Typography-led prompt systems.</div>
+        <div class="brand__subtitle">Salesforce prompt templates with context, governance, and delivery controls.</div>
       </div>
       <div class="header__actions">
         <button id="btnHelp" class="btn btn--ghost" type="button">How to Use</button>
@@ -31,8 +29,7 @@
       <section class="panel">
         <h2 class="panel__title">Inputs</h2>
         <p class="panel__hint">
-          Choose what you’re building and provide enough context so the model can produce correct, secure, and org-aligned
-          output.
+          Define the work, context, and constraints so the prompt can move from brief to build without drift.
         </p>
 
         <div class="grid">
@@ -277,7 +274,7 @@
             <div class="pill" id="tokenMeta" aria-live="polite"></div>
           </div>
         </div>
-        <p class="panel__hint">This is the prompt you paste into your AI tool. It includes explicit guardrails and output format.</p>
+        <p class="panel__hint">A structured brief for Claude or Cursor, tuned for clarity, context, and deployment.</p>
         <div id="contextBudget" class="context-budget" data-state="healthy">
           <div class="context-budget__row">
             <div class="context-budget__title">Context budget</div>
@@ -295,20 +292,20 @@
         </div>
 
         <div class="footnote">
-          Tip: if the model can’t proceed, it should ask clarifying questions instead of guessing—this is enforced in the guardrails.
+          If the model cannot proceed, it should ask concise clarifying questions before making assumptions.
         </div>
       </section>
     </main>
 
     <footer class="container footer">
       <div>
-        <div>© 2024 <strong>Ksquare Group</strong> | MBE/SBE Certified</div>
+        <div>Monotype prompt workflow concept</div>
         <div style="margin-top: 4px; font-size: 11px; color: var(--faint);">
-          Built as a static site for GitHub Pages. No data leaves your browser unless you paste it into an AI tool.
+          Runs locally in the browser. Nothing leaves the page until you copy the prompt.
         </div>
       </div>
       <div class="footer__right">
-        <a class="link" href="https://www.theksquaregroup.com/" target="_blank" rel="noopener noreferrer">Visit Ksquare Group</a>
+        <a class="link" href="https://www.monotype.com/" target="_blank" rel="noopener noreferrer">Visit Monotype</a>
         <span style="margin: 0 8px; color: var(--faint);">•</span>
         <a class="link" href="./" aria-label="Reload">Reload</a>
       </div>
@@ -325,7 +322,7 @@
         <div class="modal__body">
           <h3>Overview</h3>
           <p>
-            <strong>Ksquare Group's</strong> AI prompt template generator for Salesforce development uses prompt engineering best practices.
+            <strong>Monotype's</strong> AI prompt template generator for Salesforce development uses prompt engineering best practices.
             It structures prompts with Role, Context, Constraints, Guardrails, and Outcomes to help AI tools produce
             better, more accurate results for your Salesforce projects.
           </p>
